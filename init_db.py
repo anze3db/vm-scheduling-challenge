@@ -35,11 +35,12 @@ async def create_exam_table():
                 """
             )
             exams = [
-                ("Mathematics 101", tomorrow(10, 0), tomorrow(10, 45), 2500),
-                ("Physics 101", tomorrow(10, 0), tomorrow(11, 0), 2500),
-                ("Mathematics 201", tomorrow(11, 15), tomorrow(12, 0), 2500),
-                ("Physics 102", tomorrow(12, 0), tomorrow(13, 0), 2500),
-                ("History 102", tomorrow(15, 0), tomorrow(13, 0), 2500),
+                ("Mathematics 101", tomorrow(10, 0), tomorrow(10, 45), 2400),
+                ("Physics 101", tomorrow(10, 0), tomorrow(11, 0), 2400),
+                ("Mathematics 201", tomorrow(11, 15), tomorrow(12, 0), 2400),
+                ("Physics 102", tomorrow(12, 0), tomorrow(13, 0), 2400),
+                ("History 102", tomorrow(15, 0), tomorrow(13, 0), 2400),
+                ("History 103", tomorrow(17, 0), tomorrow(13, 0), 2400),
             ]
             await acur.executemany(
                 """INSERT INTO exam ("name", "start", "end", "students") VALUES(%s, %s, %s, %s);""",
