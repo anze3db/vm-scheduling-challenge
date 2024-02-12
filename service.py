@@ -158,7 +158,7 @@ async def creator_service(api: CloudAPI, aconn: psycopg.AsyncConnection):
 async def start_services():
     logging.info("Starting services")
     api = CloudAPI()
-    aconn = await psycopg.AsyncConnection.connect(CONNECTION_STR)
+    aconn = await psycopg.AsyncConnection.connect(CONNECTION_STR, autocommit=True)
     logging.info("Starting background tasks")
     background_tasks = set(
         [
