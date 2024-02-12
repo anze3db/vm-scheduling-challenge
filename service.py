@@ -21,7 +21,7 @@ class Exam:
     start: dt.datetime
     end: dt.datetime
     students: int
-    count_created: int = 0
+    vms_created: int = 0
 
 
 @dataclass
@@ -79,7 +79,7 @@ def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
         if exam.students < 1:
             # nothing to schedule
             continue
-        if exam.students <= exam.count_created:
+        if exam.students <= exam.vms_created:
             # all VMs already created
             continue
         if not exam_schedule:
@@ -89,7 +89,7 @@ def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
             prev_start_creating_at = exam_schedule[0].start
 
         time_to_create = (
-            exam.students - exam.count_created
+            exam.students - exam.vms_created
         ) * 6  # Create 1 VM in 6 seconds
         if prev_start_creating_at < exam.start:
             # Overlapping exam so start creating VMs before the previous exam starts
