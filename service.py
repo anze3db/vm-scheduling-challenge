@@ -2,14 +2,16 @@ import asyncio
 import datetime as dt
 import itertools
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 
 import psycopg
 
 from api import CloudAPI
+from init_db import CONNECTION_STR
 
-logging.basicConfig(level="INFO")
+logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO").upper())
 
 
 @dataclass
@@ -34,55 +36,43 @@ class VmSchedule:
     exam: Exam
 
 
-async def get_exams() -> list[Exam]:
-    async with await psycopg.AsyncConnection.connect(
-        "dbname=postgres user=postgres"
-    ) as aconn:
-        async with aconn.cursor() as acur:
-            await acur.execute(
-                """SELECT id, name, start, "end", students, (SELECT COUNT(*) FROM exam_vm AS evm WHERE evm.exam_id = e.id) 
-                   FROM exam AS e 
-                   ORDER BY start DESC;"""
-            )
-            return [Exam(*exam) for exam in await acur.fetchall()]
+async def get_exams(aconn: psycopg.AsyncConnection) -> list[Exam]:
+    async with aconn.cursor() as acur:
+        await acur.execute(
+            """SELECT id, name, start, "end", students, (SELECT COUNT(*) FROM exam_vm AS evm WHERE evm.exam_id = e.id) 
+                FROM exam AS e 
+                ORDER BY start DESC;"""
+        )
+        return [Exam(*exam) for exam in await acur.fetchall()]
 
 
-async def create_vms(created_vms: list[CreatedVM]):
-    async with await psycopg.AsyncConnection.connect(
-        "dbname=postgres user=postgres"
-    ) as aconn:
-        async with aconn.cursor() as acur:
-            exam_vms = [(vm.id, vm.exam.id) for vm in created_vms]
+async def create_vms(aconn: psycopg.AsyncConnection, created_vms: list[CreatedVM]):
+    async with aconn.cursor() as acur:
+        exam_vms = [(vm.id, vm.exam.id) for vm in created_vms]
 
-            await acur.executemany(
-                """INSERT INTO exam_vm ("id", "exam_id") VALUES(%s, %s);""",
-                exam_vms,
-            )
+        await acur.executemany(
+            """INSERT INTO exam_vm ("id", "exam_id") VALUES(%s, %s);""",
+            exam_vms,
+        )
 
 
-async def end_vms(vms_to_end: list[uuid.UUID]):
-    async with await psycopg.AsyncConnection.connect(
-        "dbname=postgres user=postgres"
-    ) as aconn:
-        async with aconn.cursor() as acur:
-            print([str(vm) for vm in vms_to_end])
-            await acur.execute(
-                """UPDATE exam_vm SET ended = NOW() WHERE id = any(%s);""",
-                ([(vm) for vm in vms_to_end],),
-            )
+async def end_vms(aconn: psycopg.AsyncConnection, vms_to_end: list[uuid.UUID]):
+    async with aconn.cursor() as acur:
+        print([str(vm) for vm in vms_to_end])
+        await acur.execute(
+            """UPDATE exam_vm SET ended = NOW() WHERE id = any(%s);""",
+            ([(vm) for vm in vms_to_end],),
+        )
 
 
-async def get_vms_to_end() -> list[uuid.UUID]:
-    async with await psycopg.AsyncConnection.connect(
-        "dbname=postgres user=postgres"
-    ) as aconn:
-        async with aconn.cursor() as acur:
-            await acur.execute(
-                """SELECT evm.id FROM exam_vm AS evm
-                     JOIN exam e ON e.id = evm.exam_id
-                     WHERE e.end < NOW() AND evm.ended IS NULL;"""
-            )
-            return [vm_uuid for (vm_uuid,) in await acur.fetchall()]
+async def get_vms_to_end(aconn: psycopg.AsyncConnection) -> list[uuid.UUID]:
+    async with aconn.cursor() as acur:
+        await acur.execute(
+            """SELECT evm.id FROM exam_vm AS evm
+                    JOIN exam e ON e.id = evm.exam_id
+                    WHERE e.end < NOW() AND evm.ended IS NULL;"""
+        )
+        return [vm_uuid for (vm_uuid,) in await acur.fetchall()]
 
 
 def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
@@ -117,9 +107,9 @@ def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
     return exam_schedule
 
 
-async def ender_service(api: CloudAPI):
+async def ender_service(api: CloudAPI, aconn: psycopg.AsyncConnection):
     while True:
-        vms_to_end = await get_vms_to_end()
+        vms_to_end = await get_vms_to_end(aconn)
         if not vms_to_end:
             logging.info("Nothing to end")
             await asyncio.sleep(1)
@@ -127,13 +117,13 @@ async def ender_service(api: CloudAPI):
 
         for batch in itertools.batched(vms_to_end, 3):
             await asyncio.gather(*[api.end(vm) for vm in batch])
-            await end_vms(list(batch))
+            await end_vms(aconn, list(batch))
             await asyncio.sleep(1)
 
 
-async def creator_service(api: CloudAPI):
+async def creator_service(api: CloudAPI, aconn: psycopg.AsyncConnection):
     while True:
-        exams = await get_exams()
+        exams = await get_exams(aconn)
         schedule = get_vm_create_schedule(exams)
         if not schedule:
             logging.info("Nothing to schedule")
@@ -158,7 +148,8 @@ async def creator_service(api: CloudAPI):
             results = await asyncio.gather(*[api.start() for _ in batch])
             # Create VMs in the DB
             await create_vms(
-                [CreatedVM(result, next_schedule.exam) for result in results]
+                aconn,
+                [CreatedVM(result, next_schedule.exam) for result in results],
             )
             # Sleep for 1s to avoid rate limit
             await asyncio.sleep(1)
@@ -167,12 +158,12 @@ async def creator_service(api: CloudAPI):
 async def start_services():
     logging.info("Starting services")
     api = CloudAPI()
-
+    aconn = await psycopg.AsyncConnection.connect(CONNECTION_STR)
     logging.info("Starting background tasks")
     background_tasks = set(
         [
-            creator_service(api),
-            ender_service(api),
+            creator_service(api, aconn),
+            ender_service(api, aconn),
         ]
     )
     logging.info("Service started")
@@ -182,6 +173,7 @@ async def start_services():
         )
     except KeyboardInterrupt:
         logging.info("Shutting down services")
+        await aconn.close()
         asyncio.gather(*background_tasks).cancel()
 
 

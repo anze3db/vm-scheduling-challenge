@@ -3,6 +3,8 @@ import datetime as dt
 
 import psycopg
 
+CONNECTION_STR = "dbname=postgres user=postgres"
+
 
 def tomorrow(hour: int, minutes: int) -> dt.datetime:
     tomorrow = dt.date.today() + dt.timedelta(days=1)
@@ -10,9 +12,7 @@ def tomorrow(hour: int, minutes: int) -> dt.datetime:
 
 
 async def create_exam_table():
-    async with await psycopg.AsyncConnection.connect(
-        "dbname=postgres user=postgres"
-    ) as aconn:
+    async with await psycopg.AsyncConnection.connect(CONNECTION_STR) as aconn:
         async with aconn.cursor() as acur:
             await acur.execute(
                 """
