@@ -5,7 +5,8 @@
 1. Set up the dev environment:
 
 ```console
-python -m venv .venv
+# Install Python 3.11 or newer
+python -m venv .venv  
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
