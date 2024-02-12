@@ -1,5 +1,9 @@
 # VM Scheduling challenge
 
+
+https://github.com/anze3db/vm-scheduling-challenge/assets/513444/c2af8cc7-ad0a-43a4-8407-bcb405eafc71
+
+
 ## Set up
 
 1. Set up the dev environment:
