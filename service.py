@@ -19,6 +19,7 @@ class Exam:
     start: dt.datetime
     end: dt.datetime
     students: int
+    count_created: int = 0
 
 
 @dataclass
@@ -39,9 +40,49 @@ async def get_exams() -> list[Exam]:
     ) as aconn:
         async with aconn.cursor() as acur:
             await acur.execute(
-                """SELECT id, name, start, "end", students FROM exam order by start desc;"""
+                """SELECT id, name, start, "end", students, (SELECT COUNT(*) FROM exam_vm AS evm WHERE evm.exam_id = e.id) 
+                   FROM exam AS e 
+                   ORDER BY start DESC;"""
             )
             return [Exam(*exam) for exam in await acur.fetchall()]
+
+
+async def create_vms(created_vms: list[CreatedVM]):
+    async with await psycopg.AsyncConnection.connect(
+        "dbname=postgres user=postgres"
+    ) as aconn:
+        async with aconn.cursor() as acur:
+            exam_vms = [(vm.id, vm.exam.id) for vm in created_vms]
+
+            await acur.executemany(
+                """INSERT INTO exam_vm ("id", "exam_id") VALUES(%s, %s);""",
+                exam_vms,
+            )
+
+
+async def end_vms(vms_to_end: list[uuid.UUID]):
+    async with await psycopg.AsyncConnection.connect(
+        "dbname=postgres user=postgres"
+    ) as aconn:
+        async with aconn.cursor() as acur:
+            print([str(vm) for vm in vms_to_end])
+            await acur.execute(
+                """UPDATE exam_vm SET ended = NOW() WHERE id = any(%s);""",
+                ([(vm) for vm in vms_to_end],),
+            )
+
+
+async def get_vms_to_end() -> list[uuid.UUID]:
+    async with await psycopg.AsyncConnection.connect(
+        "dbname=postgres user=postgres"
+    ) as aconn:
+        async with aconn.cursor() as acur:
+            await acur.execute(
+                """SELECT evm.id FROM exam_vm AS evm
+                     JOIN exam e ON e.id = evm.exam_id
+                     WHERE e.end < NOW() AND evm.ended IS NULL;"""
+            )
+            return [vm_uuid for (vm_uuid,) in await acur.fetchall()]
 
 
 def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
@@ -50,13 +91,18 @@ def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
         if exam.students < 1:
             # nothing to schedule
             continue
+        if exam.students <= exam.count_created:
+            # all VMs already created
+            continue
         if not exam_schedule:
             # No overlapping exam so set max date that should never be greater than any exam start
             prev_start_creating_at = dt.datetime.max
         else:
             prev_start_creating_at = exam_schedule[0].start
 
-        time_to_create = exam.students * 6  # Create 1 VM in 6 seconds
+        time_to_create = (
+            exam.students - exam.count_created
+        ) * 6  # Create 1 VM in 6 seconds
         if prev_start_creating_at < exam.start:
             # Overlapping exam so start creating VMs before the previous exam starts
             start_creating_at = prev_start_creating_at - dt.timedelta(
@@ -71,62 +117,62 @@ def get_vm_create_schedule(exams: list[Exam]) -> list[VmSchedule]:
     return exam_schedule
 
 
-async def create_vms(
-    schedule: list[VmSchedule], api: CloudAPI, created_vms: list[CreatedVM]
-):
-    while schedule:
-        next_schedule = schedule.pop(0)
-        if next_schedule.start > dt.datetime.now():
-            diff = next_schedule.start - dt.datetime.now()
-            logging.info(
-                "VM Starter sleeping for %s",
-                diff,
-            )
-            await asyncio.sleep(diff.seconds)
-
-        for triplet in itertools.batched(range(next_schedule.exam.students), 3):
-            results = await asyncio.gather(*[api.start() for _ in triplet])
-            for result in results:
-                created_vms.append(CreatedVM(result, next_schedule.exam))
-
-            await asyncio.sleep(1)
-
-
-async def end_vms(
-    schedule: list[VmSchedule], api: CloudAPI, created_vms: list[CreatedVM]
-):
-    while schedule or created_vms:
-        now = dt.datetime.now()
-        tasks_to_end = [vm for vm in created_vms if vm.exam.end < now]
-        if not tasks_to_end:
+async def ender_service(api: CloudAPI):
+    while True:
+        vms_to_end = await get_vms_to_end()
+        if not vms_to_end:
+            logging.info("Nothing to end")
             await asyncio.sleep(1)
             continue
 
-        for vm_triplets in itertools.batched(tasks_to_end, 3):
-            await asyncio.gather(*[api.end(vm.id) for vm in vm_triplets])
-            for vm in vm_triplets:
-                created_vms.remove(vm)
+        for batch in itertools.batched(vms_to_end, 3):
+            await asyncio.gather(*[api.end(vm) for vm in batch])
+            await end_vms(list(batch))
             await asyncio.sleep(1)
 
 
-async def start_service():
-    logging.info("Starting service")
+async def creator_service(api: CloudAPI):
+    while True:
+        exams = await get_exams()
+        schedule = get_vm_create_schedule(exams)
+        if not schedule:
+            logging.info("Nothing to schedule")
+            await asyncio.sleep(1)
+            continue
+
+        logging.debug(
+            "Create Schedule:\n    Date                ID\n%s",
+            "\n".join(f"    {s.start} {s.exam.id}" for s in schedule),
+        )
+
+        next_schedule = schedule.pop(0)
+        now = dt.datetime.now()
+        if next_schedule.start > now:
+            diff = next_schedule.start - now
+            logging.info("Next action in %s, sleeping for 1s", diff)
+            await asyncio.sleep(1)
+            continue
+
+        for batch in itertools.batched(range(next_schedule.exam.students), 3):
+            # Call api.create_vm concurrently up to 3 times
+            results = await asyncio.gather(*[api.start() for _ in batch])
+            # Create VMs in the DB
+            await create_vms(
+                [CreatedVM(result, next_schedule.exam) for result in results]
+            )
+            # Sleep for 1s to avoid rate limit
+            await asyncio.sleep(1)
+
+
+async def start_services():
+    logging.info("Starting services")
     api = CloudAPI()
-    created_vms: list[CreatedVM] = []
-    logging.info("Fetching exams")
-    exams = await get_exams()
-    logging.info("Calculating schedule")
-    vm_create_schedule = get_vm_create_schedule(exams)
-    logging.info(
-        "Create Schedule:\n    Date                ID\n%s",
-        "\n".join(f"    {s.start} {s.exam.id}" for s in vm_create_schedule),
-    )
 
     logging.info("Starting background tasks")
     background_tasks = set(
         [
-            create_vms(vm_create_schedule, api, created_vms),
-            end_vms(vm_create_schedule, api, created_vms),
+            creator_service(api),
+            ender_service(api),
         ]
     )
     logging.info("Service started")
@@ -135,11 +181,12 @@ async def start_service():
             *background_tasks,
         )
     except KeyboardInterrupt:
+        logging.info("Shutting down services")
         asyncio.gather(*background_tasks).cancel()
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(start_service())
+        asyncio.run(start_services())
     except KeyboardInterrupt:
         logging.info("Shutting down")

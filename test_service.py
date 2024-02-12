@@ -195,3 +195,32 @@ def test_get_create_schedule_multiple_overlap_an_no_overlap():
             exam3,
         ),
     ]
+
+
+def test_get_create_schedule_created():
+    exam1 = Exam(
+        1,
+        "Math",
+        dt.datetime(2024, 2, 12, 8, 10),
+        dt.datetime(2024, 2, 12, 9, 10),
+        2400,
+        2400,
+    )
+    assert get_vm_create_schedule([exam1]) == []
+
+
+def test_get_create_schedule_partially_created():
+    exam1 = Exam(
+        1,
+        "Math",
+        dt.datetime(2024, 2, 12, 8, 10),
+        dt.datetime(2024, 2, 12, 9, 10),
+        2400,
+        2300,
+    )
+    assert get_vm_create_schedule([exam1]) == [
+        VmSchedule(
+            dt.datetime(2024, 2, 12, 8, 0),
+            exam1,
+        )
+    ]

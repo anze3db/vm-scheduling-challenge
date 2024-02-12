@@ -28,7 +28,9 @@ async def create_exam_table():
                 -- Allocated VMs for each student
                 CREATE TABLE IF NOT EXISTS exam_vm (
                     "id" uuid,
-                    "exam_id" integer references exam(id)
+                    "exam_id" integer references exam(id),
+                    created timestamp default now(),
+                    ended timestamp default null
                 );
 
                 TRUNCATE TABLE exam_vm, exam;
