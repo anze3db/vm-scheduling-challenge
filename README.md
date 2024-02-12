@@ -11,7 +11,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-2. Create the database tables and populate the data:
+2. Create the database tables:
 
 ```
 python init_db.py
@@ -20,7 +20,7 @@ python init_db.py
 3. Run the scheduling service:
 
 ```
-python vm_service.py
+python service.py
 ```
 
 4. Run the tests
