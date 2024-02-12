@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-class RateLimitException(Exception):
+class RateLimitExceededError(Exception):
     pass
 
 
@@ -26,7 +26,7 @@ def ratelimit(rate: int):
             calls[:] = [call for call in calls if call > one_second_ago]
 
             if len(calls) >= rate:
-                raise RateLimitException()
+                raise RateLimitExceededError()
 
             # Add current call:
             calls.append(current_time)
