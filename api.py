@@ -67,5 +67,8 @@ class CloudAPI:
 
     @ratelimit(3)
     async def end(self, vm_id: uuid.UUID):
-        logger.info("Stopping VM %s", vm_id)
-        self.vms.remove(vm_id)
+        logger.info("Ending VM %s", vm_id)
+        if vm_id in self.vms:
+            self.vms.remove(vm_id)
+        if vm_id in self.vms_pending_queue:
+            self.vms_pending_queue.remove(vm_id)
