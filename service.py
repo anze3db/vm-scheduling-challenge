@@ -143,6 +143,11 @@ async def creator_service(api: CloudAPI, aconn: psycopg.AsyncConnection):
             await asyncio.sleep(1)
             continue
 
+        if next_schedule.start < now - dt.timedelta(seconds=6):
+            logging.warning(
+                "Cretion of VMs for exam %s is delayed", next_schedule.exam.id
+            )
+
         for batch in itertools.batched(range(next_schedule.exam.students), 3):
             # Call api.create_vm concurrently up to 3 times
             results = await asyncio.gather(*[api.start() for _ in batch])
