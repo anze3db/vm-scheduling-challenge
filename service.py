@@ -40,8 +40,8 @@ async def get_exams(aconn: psycopg.AsyncConnection) -> list[Exam]:
     async with aconn.cursor() as acur:
         await acur.execute(
             """SELECT id, name, start, "end", students, (SELECT COUNT(*) FROM exam_vm AS evm WHERE evm.exam_id = e.id) 
-                FROM exam AS e 
-                ORDER BY start DESC;"""
+               FROM exam AS e 
+               ORDER BY start DESC;"""
         )
         return [Exam(*exam) for exam in await acur.fetchall()]
 
@@ -49,7 +49,6 @@ async def get_exams(aconn: psycopg.AsyncConnection) -> list[Exam]:
 async def create_vms(aconn: psycopg.AsyncConnection, created_vms: list[CreatedVM]):
     async with aconn.cursor() as acur:
         exam_vms = [(vm.id, vm.exam.id) for vm in created_vms]
-
         await acur.executemany(
             """INSERT INTO exam_vm ("id", "exam_id") VALUES(%s, %s);""",
             exam_vms,
@@ -58,7 +57,6 @@ async def create_vms(aconn: psycopg.AsyncConnection, created_vms: list[CreatedVM
 
 async def end_vms(aconn: psycopg.AsyncConnection, vms_to_end: list[uuid.UUID]):
     async with aconn.cursor() as acur:
-        print([str(vm) for vm in vms_to_end])
         await acur.execute(
             """UPDATE exam_vm SET ended = NOW() WHERE id = any(%s);""",
             ([(vm) for vm in vms_to_end],),
@@ -69,8 +67,8 @@ async def get_vms_to_end(aconn: psycopg.AsyncConnection) -> list[uuid.UUID]:
     async with aconn.cursor() as acur:
         await acur.execute(
             """SELECT evm.id FROM exam_vm AS evm
-                    JOIN exam e ON e.id = evm.exam_id
-                    WHERE e.end < NOW() AND evm.ended IS NULL;"""
+               JOIN exam e ON e.id = evm.exam_id
+               WHERE e.end < NOW() AND evm.ended IS NULL;"""
         )
         return [vm_uuid for (vm_uuid,) in await acur.fetchall()]
 
